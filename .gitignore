@@ -1,0 +1,18 @@
+# OAuth private keys and generated config — never commit these
+private_key.pem
+public_key.pem
+*.pem
+*.p12
+*.pfx
+buzz-config.properties
+
+# Maven build output
+target/
+dependency-reduced-pom.xml
+
+# Editor / OS
+.vscode/
+.idea/
+*.iml
+*.swp
+.DS_Store
