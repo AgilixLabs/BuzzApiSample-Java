@@ -41,10 +41,24 @@ The sample is intentionally read-only — it can be run repeatedly without modif
 
 ## Requirements
 
-- Java 8 or newer (a JDK).
+- Java 8 or newer (a JDK). Verified on Java 8 through the current JDK (25).
 - [Apache Maven](https://maven.apache.org/) 3.6+.
-- [Apache Groovy](https://groovy.apache.org/) 3.0+ — only to run the setup/testing scripts in
-  `scripts/` (the library and sample themselves are pure Java/Maven).
+- [Apache Groovy](https://groovy.apache.org/) — only to run the setup/testing scripts in
+  `scripts/` (the library and sample themselves are pure Java/Maven). Use **Groovy 4.0.28+**
+  (or 5.x) if you are on JDK 24/25; Groovy 4.0.x also supports Java 8+, so a single recent
+  4.0.x works across the whole supported JDK range.
+
+## Compatibility
+
+This project targets **Java 8 bytecode** (`maven.compiler.release=8`) for the broadest possible
+reach, and it also builds and runs cleanly on the newest JDKs — verified end-to-end on **JDK 8's
+API level through JDK 25 (LTS)**. Nothing here discourages running on the latest Java:
+
+- `release=8` cross-compiles against the Java 8 API on any JDK 9+, and the build suppresses the
+  "obsolete options" note so recent JDKs build without noise.
+- To *drop* Java 8 support and modernise later, simply raise `maven.compiler.release` in
+  `pom.xml` (e.g. to `11`, `17`, or `21`) — no source changes are needed.
+- Dependencies track current releases (Gson 2.11.0), which remain Java 8 compatible.
 
 ## Configuration
 

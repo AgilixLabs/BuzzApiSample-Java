@@ -14,10 +14,12 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <!-- Target Java 8 for broad compatibility. -->
-        <maven.compiler.source>1.8</maven.compiler.source>
-        <maven.compiler.target>1.8</maven.compiler.target>
-        <gson.version>2.10.1</gson.version>
+        <!-- Target Java 8 bytecode for broad compatibility.  `release` is the modern,
+             single-property replacement for source+target and cross-compiles correctly
+             against the Java 8 API on any JDK 9+.  The build also runs cleanly on the
+             newest JDKs (25+) — the "obsolete options" warning is suppressed below. -->
+        <maven.compiler.release>8</maven.compiler.release>
+        <gson.version>2.11.0</gson.version>
         <exec.mainClass>com.agilixbuzz.sample.Sample</exec.mainClass>
     </properties>
 
@@ -32,6 +34,19 @@
     <build>
         <finalName>buzz-api-sample</finalName>
         <plugins>
+            <!-- Suppress the "source/target/release value 8 is obsolete" note that newer
+                 JDKs emit, so building on the latest JDK stays quiet while we keep the
+                 Java 8 bytecode target. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <compilerArgs>
+                        <arg>-Xlint:-options</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
             <!-- `mvn compile exec:java` runs the read-only sample. -->
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
