@@ -42,7 +42,7 @@ try {
     println "  Private key : ${privPath}"
     println "  Public key  : ${pubPath}\n"
     println 'Next step: register the public key with Buzz.'
-    println '  groovy scripts/RegisterBuzzOAuthKey.groovy -s https://api.agilixbuzz.com -u <userid> -k <kid> -p public_key.pem\n'
+    println '  groovy scripts/RegisterBuzzOAuthKey.groovy -s https://backgroundapi.agilixbuzz.com -u <userid> -k <kid> -p public_key.pem\n'
     println 'IMPORTANT: Never commit private_key.pem to source control.'
 } catch (RuntimeException e) {
     System.err.println "Error: ${e.message}"

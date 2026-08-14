@@ -38,7 +38,7 @@ println '  Buzz OAuth 2.0 Application Setup (Java)'
 println '=========================================================='
 
 common.section('Step 1: Buzz Server URL')
-def server = (serverArg ?: common.promptRequired('Buzz API server URL (e.g. https://api.agilixbuzz.com)', '', 'BUZZ_SERVER_URL'))
+def server = (serverArg ?: common.promptRequired('Buzz API server URL (e.g. https://backgroundapi.agilixbuzz.com)', '', 'BUZZ_SERVER_URL'))
         .replaceAll('/+$', '')
 println "  Server: ${server}"
 
@@ -126,7 +126,10 @@ String getOrCreateAccount(common, String server, String adminToken) {
                 targetDomain = choice
             }
         } else {
-            println ' (could not fetch domains)\n'
+            // An empty list is normal when the admin holds no ReadDomain right anywhere,
+            // or when the domain simply has no child domains.  Not an error -- just ask.
+            println ' done\n'
+            println '  No domains were listed for this account, so enter the target domain directly.'
             targetDomain = common.promptRequired('Domain id for the new account (e.g. //myschool or a numeric id)')
         }
     }
@@ -145,6 +148,19 @@ String getOrCreateAccount(common, String server, String adminToken) {
     if (common.responseCode(resp) != 'OK') {
         common.fail("CreateUsers2 failed (code: ${common.responseCode(resp)}).  Response: ${resp}")
     }
+    // The outer OK only means the request parsed; CreateUsers2 reports the outcome for
+    // the user it created under responses.response, so a denial arrives inside an "OK"
+    // envelope and must be checked separately.
+    def item = common.itemResult(resp)
+    if (item.code && item.code != 'OK') {
+        def detail = item.message ? " - ${item.message}" : ''
+        if (item.code == 'AccessDenied') {
+            common.fail("CreateUsers2 was denied (code: ${item.code}${detail}).\n"
+                + "  The admin account needs the CreateUser right on domain ${targetDomain}.\n"
+                + '  Grant it that right (and UpdateUser, so it can register the OAuth key), then re-run.')
+        }
+        common.fail("CreateUsers2 failed for the requested user (code: ${item.code}${detail}).")
+    }
     def userId = extractCreatedUserId(resp)
     if (!userId) common.fail("CreateUsers2 succeeded but returned no userid.  Response: ${resp}")
     println " OK (userid: ${userId})"
@@ -152,12 +168,20 @@ String getOrCreateAccount(common, String server, String adminToken) {
 }
 
 List listDomains(common, String server, String token) {
-    def resp = common.buzzGet(server, 'getdomains', [:], token)
+    // ListDomains, not "getdomains" -- the latter is not a Buzz command and always
+    // answered "Unknown API command", so this silently returned [] on every run.
+    // domainid=0 means "every domain this account has ReadDomain rights on"; limit=0
+    // lifts the default 100-domain cap (capped server-side at 1000 for domainid=0).
+    //   https://api.agilixbuzz.com/docs/entry/Command/ListDomains.md
+    def resp = common.buzzGet(server, 'listdomains', [domainid: '0', limit: '0'], token)
     if (common.responseCode(resp) != 'OK') return []
+    // When the account can read no domains the server answers OK with "domains":{},
+    // so every level has to tolerate a missing or empty node.
     def domains = resp?.response?.domains?.domain ?: []
     if (domains instanceof Map) domains = [domains]
     return domains.findAll { it instanceof Map }
-            .collect { [((it.id ?: it.domainid ?: '') as String), ((it.name ?: '') as String)] }
+            // The Domain schema names the identifier "id"; "domainid" is what you *send*.
+            .collect { [((it.id ?: '') as String), ((it.name ?: '') as String)] }
 }
 
 String extractCreatedUserId(Map resp) {
@@ -165,7 +189,8 @@ String extractCreatedUserId(Map resp) {
     def inner = r?.responses?.response ?: [:]
     if (inner instanceof List) inner = inner ? inner[0] : [:]
     def user = (inner instanceof Map) ? (inner.user ?: [:]) : [:]
-    return (user.userid ?: user.id ?: '') as String
+    // The CreateUsers2 response documents this as "userid".
+    return (user.userid ?: '') as String
 }
 
 String defaultKid() {

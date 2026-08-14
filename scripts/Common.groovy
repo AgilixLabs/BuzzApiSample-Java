@@ -121,20 +121,24 @@ class BuzzCommon {
 
     private static String enc(String s) { URLEncoder.encode(s, 'UTF-8') }
 
-    // /cmd/* endpoints authenticate a session token via the _token query parameter.
+    // Session tokens travel in an Authorization: Bearer header on both /cmd/* and
+    // /api/* endpoints.  A _token query parameter is also accepted by /cmd/*, but a
+    // credential in a URL is recorded by server and proxy access logs.
+    private static Map authHeaders(String token) {
+        return token ? ['Authorization': "Bearer ${token}" as String] : [:]
+    }
+
     Map buzzPost(String server, String cmd, Object body, String token = null) {
         def url = "${server}/cmd/${cmd}"
-        if (token) url += "?_token=${enc(token)}"
-        def r = httpJson('POST', url, JsonOutput.toJson(body), [:], 'application/json')
+        def r = httpJson('POST', url, JsonOutput.toJson(body), authHeaders(token), 'application/json')
         return (r.data instanceof Map) ? (Map) r.data : null
     }
 
     Map buzzGet(String server, String cmd, Map params = [:], String token = null) {
         def qs = []
         params?.each { k, v -> qs << "${enc(k as String)}=${enc(v as String)}" }
-        if (token) qs << "_token=${enc(token)}"
         def url = "${server}/cmd/${cmd}" + (qs ? '?' + qs.join('&') : '')
-        def r = httpJson('GET', url, null)
+        def r = httpJson('GET', url, null, authHeaders(token))
         return (r.data instanceof Map) ? (Map) r.data : null
     }
 
@@ -162,6 +166,42 @@ class BuzzCommon {
         return (inner.message ?: '') as String
     }
 
+    // The per-entity result of a multi-object command (CreateUsers2, DeleteUsers).
+    // Those commands report each entity's outcome under response.responses.response,
+    // while the OUTER code is OK whenever the request was merely well formed.  A
+    // per-entity AccessDenied therefore arrives inside an "OK" envelope, so the outer
+    // code alone cannot tell you whether the entity was actually created or deleted.
+    // 'code' is '' when the response carries no per-entity result at all.
+    Map itemResult(Map resp) {
+        def empty = [code: '', message: '', userid: '']
+        def inner = (resp?.response instanceof Map) ? resp.response : resp
+        if (!(inner instanceof Map) || !(inner.responses instanceof Map)) return empty
+        def node = inner.responses.response
+        if (node instanceof List) node = node ? node[0] : null
+        if (!(node instanceof Map)) return empty
+        return [
+            code   : (node.code ?: '') as String,
+            message: (node.message ?: '') as String,
+            userid : ((node.user instanceof Map) ? (node.user.userid ?: '') : '') as String,
+        ]
+    }
+
+    // The short-lived token login3 returns alongside SecondFactorRequired.  Observed
+    // shape: response.token, duplicated at response.body.token.  There is no "user"
+    // node on that response, so response.user.token (where the session token lives on a
+    // *successful* login) does not exist yet.  remembermfa.token is deliberately
+    // ignored: it remembers a device and cannot complete this login.
+    String secondFactorToken(Map resp) {
+        def inner = (resp?.response instanceof Map) ? resp.response : resp
+        if (!(inner instanceof Map)) return ''
+        for (c in [ (inner.user instanceof Map) ? inner.user.token : null,
+                    inner.token,
+                    (inner.body instanceof Map) ? inner.body.token : null ]) {
+            if (c instanceof String && c) return c
+        }
+        return ''
+    }
+
     // ── Admin login (login3, with optional MFA) ─────────────────────────────────
     String adminLogin(String server) {
         while (true) {
@@ -172,11 +212,33 @@ class BuzzCommon {
             def resp = buzzPost(server, 'login3', [request: [cmd: 'login3', username: username, password: password]])
             def code = responseCode(resp)
 
-            if (code && (code.toLowerCase() =~ /(factor|mfa|otp|challenge|verify|multifactor)/)) {
-                println ' MFA required.'
-                def mfa = promptRequired('MFA / one-time code', '', 'BUZZ_ADMIN_MFA')
-                def partial = resp?.response?.token ?: resp?.token ?: ''
-                resp = buzzPost(server, 'verifylogin', [request: [cmd: 'verifylogin', token: partial, code: mfa]])
+            // Multi-factor authentication.  login3 answers SecondFactorRequired when the
+            // password was correct but the account has MFA configured, and returns a
+            // short-lived token that is presented in an Authorization: Bearer header to
+            // secondfactorauthenticate, which returns the real session token.  Putting
+            // the token in the request body instead is ignored: AccessDenied userId='-1'.
+            //   https://api.agilixbuzz.com/docs/entry/Command/Login3.md
+            //   https://api.agilixbuzz.com/docs/entry/Command/SecondFactorAuthenticate.md
+            if (code == 'SecondFactorConfigurationNowRequired') {
+                println '\n  This account must configure multi-factor authentication before it can'
+                println '  be used.  Complete MFA setup in Buzz, then re-run this script.'
+                if (System.getenv('BUZZ_ADMIN_PASSWORD')) fail('Admin account requires multi-factor authentication setup.')
+                println '  Press Ctrl+C to abort.\n'
+                continue
+            }
+
+            if (code == 'SecondFactorRequired') {
+                println ' multi-factor authentication required.'
+                def partial = secondFactorToken(resp)
+                if (!partial) {
+                    println '\n  Buzz asked for a second factor but no token could be found in its reply.'
+                    if (System.getenv('BUZZ_ADMIN_PASSWORD')) fail('No second-factor token was returned.')
+                    println '  Press Ctrl+C to abort.\n'
+                    continue
+                }
+                def otp = promptRequired('One-time code from your authenticator app or email', '', 'BUZZ_ADMIN_MFA')
+                resp = buzzPost(server, 'secondfactorauthenticate',
+                    [request: [cmd: 'secondfactorauthenticate', otp: otp]], partial)
                 code = responseCode(resp)
             }
 

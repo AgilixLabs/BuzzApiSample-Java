@@ -66,8 +66,9 @@ public final class Sample {
         JsonObject userNode = client.verifyResponse(client.jsonRequest("GET", "getuser2"));
         JsonObject user = userNode.getAsJsonObject("user");
 
-        // This server returns the identifier as "id"; older servers use "userid".
-        String userId = firstNonNull(getString(user, "userid"), getString(user, "id"));
+        // The User schema names this "id".  ("userid" is the CreateUsers2 *response*
+        // field for a newly created user - a different command, not an alias here.)
+        String userId = getString(user, "id");
         String domainId = getString(user, "domainid");
         log.info("Authenticated as user " + getString(user, "username")
                 + " (\"" + getString(user, "firstname") + " " + getString(user, "lastname")
@@ -149,10 +150,6 @@ public final class Sample {
             return null;
         }
         return obj.get(key).getAsString();
-    }
-
-    private static String firstNonNull(String a, String b) {
-        return a != null ? a : b;
     }
 
     /** Configure a clean "LEVEL: message" logger to stdout at INFO. */

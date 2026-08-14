@@ -65,10 +65,16 @@ if (oauthKid) {
 
 println "\n-- Deleting Application Identity account (userid: ${oauthUserId}) --"
 def resp = common.buzzPost(server, 'deleteusers', [requests: [user: [[userid: oauthUserId]]]], adminToken)
-if (common.responseCode(resp) == 'OK') {
+// The per-user outcome is authoritative.  The OUTER code is OK whenever the request
+// was merely well formed, so checking it first would report success for a delete
+// that was actually denied or whose target did not exist.
+def delItem = common.itemResult(resp)
+def delCode = delItem.code ?: common.responseCode(resp)
+def delDetail = delItem.message ? " - ${delItem.message}" : ''
+if (delCode == 'OK') {
     println 'Application Identity account deleted.'
 } else {
-    System.err.println "Warning: delete returned code \"${common.responseCode(resp)}\". Continuing."
+    System.err.println "Warning: delete returned code \"${delCode}\"${delDetail}. Continuing."
 }
 
 println '\n-- Removing local files --------------------------------'
