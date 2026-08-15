@@ -137,7 +137,7 @@ Choose a **Key ID** (`kid`), e.g. `2025-q2`. Allowed characters: ASCII letters, 
 
 ```bash
 groovy scripts/RegisterBuzzOAuthKey.groovy \
-    -s https://api.agilixbuzz.com \
+    -s https://backgroundapi.agilixbuzz.com \
     -u 12345678 \
     -k 2025-q2 \
     -p public_key.pem
@@ -169,7 +169,7 @@ PrivateKey key = BuzzApiClient.loadPrivateKeyFromPem("private_key.pem");
 // or: BuzzApiClient.loadPrivateKeyFromKeystore("buzz-oauth.p12", "changeit", "buzz");
 
 BuzzApiClient client = new BuzzApiClient(
-        "https://api.agilixbuzz.com",
+        "https://backgroundapi.agilixbuzz.com",
         "MyApp/1.0 (Java; MyApp; admin@example.com)",
         "12345678",   // oauthUserId
         "2025-q2",    // oauthKid
@@ -183,7 +183,7 @@ JsonObject domain = client.verifyResponse(
 
 `jsonRequest(method, cmd, params, jsonBody, includeToken)` returns the parsed `JsonObject`.
 `verifyResponse(node)` throws `BuzzApiException` unless `response.code` equals `"OK"` (and
-recursively checks child responses from batch APIs).
+recursively checks child responses from multi-object commands such as CreateUsers2).
 
 ---
 
