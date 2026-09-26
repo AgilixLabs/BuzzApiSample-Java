@@ -380,14 +380,14 @@ public final class BuzzApiClient {
         int retriesRemaining = RETRIES_TO_MAKE;
         long baseWait = INITIAL_WAIT_MS;
         while (true) {
-            // A fresh assertion is built on every attempt: JWTs expire in two
-            // minutes and a long backoff can push a reused assertion past exp.
+            // Wait out any throttle window first, then build a fresh assertion on every
+            // attempt: JWTs expire in two minutes and a throttle wait can be up to ten, so
+            // an assertion built before the wait (or reused) could be past its exp claim.
+            waitForThrottleWindow();
             String assertion = buildClientAssertion();
             String form = "grant_type=client_credentials"
                     + "&client_assertion_type=" + urlEncode("urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
                     + "&client_assertion=" + urlEncode(assertion);
-
-            waitForThrottleWindow();
 
             Response resp;
             try {
