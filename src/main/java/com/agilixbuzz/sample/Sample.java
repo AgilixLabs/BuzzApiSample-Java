@@ -36,17 +36,29 @@ public final class Sample {
 
     private static final String CONFIG_FILE = "buzz-config.properties";
 
+    // Replace YOUR_APPLICATION_NAME with your application's name and version, such as "AcmeRosterSync/1.0".
+    // It is how Agilix support identifies your integration. Do not include the word "Buzz": a User-Agent
+    // containing it is treated as one of Agilix's own applications.
+    private static final String APPLICATION_NAME = YOUR_APPLICATION_NAME;
+
     public static void main(String[] args) throws IOException {
         Logger log = configureLogger();
 
         Properties config = loadConfig();
         String serverUrl = required(config, "serverUrl");
+        // Refuse a deprecated endpoint host name before doing anything else.
+        try {
+            serverUrl = BuzzApiClient.checkServerUrl(serverUrl);
+        } catch (IllegalArgumentException e) {
+            System.err.println("Invalid serverUrl in " + CONFIG_FILE + ": " + e.getMessage());
+            System.exit(1);
+        }
         String oauthUserId = required(config, "oauthUserId");
         String oauthKid = required(config, "oauthKid");
         String contact = config.getProperty("contactInformation", "");
         String appInfo = config.getProperty("applicationInformation", "");
 
-        String userAgent = "BuzzApiClient/1.0.0 (Java; " + appInfo + "; " + contact + ")";
+        String userAgent = APPLICATION_NAME + " (Java; " + appInfo + "; " + contact + ")";
         PrivateKey privateKey = loadPrivateKey(config);
 
         BuzzApiClient client = new BuzzApiClient(serverUrl, userAgent, oauthUserId, oauthKid,

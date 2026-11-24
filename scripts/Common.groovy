@@ -1,5 +1,6 @@
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
+import java.net.URI
 import java.net.URLEncoder
 import java.security.KeyPairGenerator
 import java.util.Base64
@@ -27,6 +28,13 @@ class BuzzCommon {
         ['serverUrl', 'contactInformation', 'applicationInformation', 'oauthUserId', 'oauthKid', 'privateKeyPath']
     static final List<String> CONFIG_REQUIRED = ['serverUrl', 'oauthUserId', 'oauthKid', 'privateKeyPath']
 
+    // The original, single API endpoint.  It is deprecated for integrations: Buzz
+    // refuses it (code "ApiDeprecated") for users and domains created after the
+    // deprecation was enforced.  Keep in step with BuzzApiClient.checkServerUrl,
+    // which these scripts cannot call because they run without the compiled classes.
+    //   https://interactiveapi.agilixbuzz.com/docs/entry/Concept/ApiDeprecation.md
+    static final Set<String> LEGACY_API_HOSTS = ['api.agilixbuzz.com'] as Set
+
     private final BufferedReader stdin = new BufferedReader(new InputStreamReader(System.in))
 
     // ── Console output ─────────────────────────────────────────────────────────
@@ -40,6 +48,40 @@ class BuzzCommon {
     void fail(String msg) {
         System.err.println "\nError: ${msg}"
         System.exit(1)
+    }
+
+    // ── Deprecated endpoints and APIs ──────────────────────────────────────────
+    /** Return the server URL trimmed, stopping the script if it names a deprecated endpoint host name. */
+    String checkServerUrl(String server) {
+        def url = (server ?: '').trim().replaceAll('/+$', '')
+        String host = null
+        try { host = new URI(url).host } catch (ignored) { }
+        host = (host ?: '').toLowerCase(Locale.ROOT)
+        if (LEGACY_API_HOSTS.contains(host)) {
+            fail("${host} is deprecated for API integrations, and Buzz refuses it for new users and domains. "
+                + 'Use the background endpoint (https://backgroundapi.agilixbuzz.com) for background processing, '
+                + 'or the interactive endpoint (https://interactiveapi.agilixbuzz.com) for requests a user is waiting on. '
+                + "See 'API Deprecation' and 'API Time Limiting' in the Buzz API documentation.")
+        }
+        return url
+    }
+
+    // Buzz refuses a deprecated command, endpoint host name or sign-in for new users
+    // and domains (code "ApiDeprecated", on the response or on an item within it).
+    // Trying again cannot help, so stop and show the server's message, which says
+    // what to use instead.
+    void failIfDeprecated(Map resp) {
+        def code = responseCode(resp)
+        def message = responseMessage(resp)
+        if (code != 'ApiDeprecated') {
+            def item = itemResult(resp)
+            code = item.code
+            message = item.message
+        }
+        if (code == 'ApiDeprecated') {
+            println()
+            fail(message ?: 'Buzz refused this request because it uses a deprecated API.')
+        }
     }
 
     // ── Prompts (with environment-variable fallbacks) ──────────────────────────
@@ -204,6 +246,9 @@ class BuzzCommon {
 
     // ── Admin login (login3, with optional MFA) ─────────────────────────────────
     String adminLogin(String server) {
+        // Refuse a deprecated endpoint host name before asking for a password.
+        checkServerUrl(server)
+
         while (true) {
             def username = readAdminUsername()
             def password = promptPassword('Admin password', 'BUZZ_ADMIN_PASSWORD')
@@ -217,8 +262,8 @@ class BuzzCommon {
             // short-lived token that is presented in an Authorization: Bearer header to
             // secondfactorauthenticate, which returns the real session token.  Putting
             // the token in the request body instead is ignored: AccessDenied userId='-1'.
-            //   https://api.agilixbuzz.com/docs/entry/Command/Login3.md
-            //   https://api.agilixbuzz.com/docs/entry/Command/SecondFactorAuthenticate.md
+            //   https://interactiveapi.agilixbuzz.com/docs/entry/Command/Login3.md
+            //   https://interactiveapi.agilixbuzz.com/docs/entry/Command/SecondFactorAuthenticate.md
             if (code == 'SecondFactorConfigurationNowRequired') {
                 println '\n  This account must configure multi-factor authentication before it can'
                 println '  be used.  Complete MFA setup in Buzz, then re-run this script.'
@@ -241,6 +286,10 @@ class BuzzCommon {
                     [request: [cmd: 'secondfactorauthenticate', otp: otp]], partial)
                 code = responseCode(resp)
             }
+
+            // Buzz refuses a deprecated endpoint host name or sign-in for new users and
+            // domains.  Trying again cannot help, so stop and show what to use instead.
+            failIfDeprecated(resp)
 
             if (code != 'OK') {
                 def msg = responseMessage(resp)

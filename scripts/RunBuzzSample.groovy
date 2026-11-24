@@ -5,11 +5,19 @@
  * key file not readable), the interactive setup runs first.  Then the read-only
  * sample runs via Maven (`mvn -q compile exec:java`).
  *
+ * The sample runs under a temporary application name (QuickStartSample/1.0), so the
+ * quick start works before you have named your application in Sample.java.  Java has
+ * no way to define that name from outside the source, so the project is copied to a
+ * temporary directory and the copy is named and built there; Sample.java itself is
+ * never edited.  Set your own name there before using the code anywhere else.
+ *
  * Usage:
  *     groovy scripts/RunBuzzSample.groovy [--setup]
  *
  *     --setup   Force re-running setup even if already configured.
  */
+
+import java.nio.file.Files
 
 def scriptDir = new File(getClass().protectionDomain.codeSource.location.toURI()).parentFile
 def common = evaluate(new File(scriptDir, 'Common.groovy'))
@@ -50,7 +58,32 @@ if (force || !setupComplete()) {
 println '\n-- Running the sample ----------------------------------'
 def isWin = System.getProperty('os.name').toLowerCase().contains('win')
 def mvn = isWin ? 'mvn.cmd' : 'mvn'
-def pb = new ProcessBuilder([mvn, '-q', 'compile', 'exec:java'])
-pb.directory(projectRoot)
-pb.inheritIO()
-System.exit(pb.start().waitFor())
+def quickStartName = 'QuickStartSample/1.0'
+def placeholder = '= YOUR_APPLICATION_NAME;'
+def root = projectRoot.toPath()
+def tempDir = Files.createTempDirectory('sample-quickstart-')
+int rc = 1
+try {
+    Files.copy(root.resolve('pom.xml'), tempDir.resolve('pom.xml'))
+    Files.walk(root.resolve('src')).withCloseable { paths ->
+        paths.forEach { p ->
+            def target = tempDir.resolve(root.relativize(p))
+            if (Files.isDirectory(p)) Files.createDirectories(target)
+            else Files.copy(p, target)
+        }
+    }
+    // Name the copy, unless Sample.java already has its own name.
+    def sample = tempDir.resolve('src/main/java/com/agilixbuzz/sample/Sample.java').toFile()
+    def text = sample.getText('UTF-8')
+    if (text.contains(placeholder)) {
+        sample.setText(text.replace(placeholder, '= "' + quickStartName + '";'), 'UTF-8')
+    }
+    // Build the copy, but run from the project root so buzz-config.properties is found.
+    def pb = new ProcessBuilder([mvn, '-q', '-f', tempDir.resolve('pom.xml').toString(), 'compile', 'exec:java'])
+    pb.directory(projectRoot)
+    pb.inheritIO()
+    rc = pb.start().waitFor()
+} finally {
+    tempDir.toFile().deleteDir()
+}
+System.exit(rc)

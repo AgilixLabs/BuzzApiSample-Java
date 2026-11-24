@@ -26,6 +26,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.StringReader;
 import java.net.HttpURLConnection;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -115,6 +117,22 @@ public final class BuzzApiClient {
             417, 421, 422, 424, 426, 428, 431, 451,
             501, 505, 506, 508, 510, 511));
 
+    /**
+     * The original, single API endpoint. It is deprecated for integrations: Buzz
+     * refuses it (code "ApiDeprecated") for users and domains created after the
+     * deprecation was enforced. Use the background endpoint for background
+     * processing, or the interactive endpoint for requests a user is waiting on.
+     *   https://interactiveapi.agilixbuzz.com/docs/entry/Concept/ApiDeprecation.md
+     */
+    private static final Set<String> LEGACY_API_HOSTS = new HashSet<String>(Arrays.asList(
+            "api.agilixbuzz.com"));
+
+    /**
+     * The response code Buzz gives a request that used a deprecated command,
+     * endpoint host name or kind of sign-in. It is never worth retrying.
+     */
+    private static final String DEPRECATED_CODE = "ApiDeprecated";
+
     private static final Gson GSON = new Gson();
 
     private final String serverUrl;
@@ -143,6 +161,7 @@ public final class BuzzApiClient {
      * Create a client.
      *
      * @param serverUrl   Buzz server URL, including protocol, without a trailing '/'.
+     *                    A deprecated endpoint host name is refused (see {@link #checkServerUrl}).
      * @param userAgent   User-Agent header value sent on every request.
      * @param oauthUserId userid of the Application Identity account (OAuth client_id / JWT iss+sub).
      * @param oauthKid    key id (kid) chosen when the public key was registered.
@@ -162,7 +181,7 @@ public final class BuzzApiClient {
         if (privateKey == null) {
             throw new IllegalArgumentException("privateKey is required");
         }
-        this.serverUrl = serverUrl.trim().replaceAll("/+$", "");
+        this.serverUrl = checkServerUrl(serverUrl);
         this.userAgent = userAgent;
         this.oauthUserId = oauthUserId;
         this.oauthKid = oauthKid;
@@ -180,6 +199,31 @@ public final class BuzzApiClient {
     }
 
     // ── Construction helpers ──────────────────────────────────────────────────
+    /**
+     * Return {@code serverUrl} trimmed (no surrounding whitespace or trailing '/'),
+     * refusing a deprecated endpoint host name.
+     *
+     * @throws IllegalArgumentException if the URL names a deprecated host (api.agilixbuzz.com).
+     */
+    public static String checkServerUrl(String serverUrl) {
+        String url = (serverUrl == null ? "" : serverUrl).trim().replaceAll("/+$", "");
+        String host;
+        try {
+            host = new URI(url).getHost();
+        } catch (URISyntaxException e) {
+            host = null;    // not a URL this check can read; the request itself will report it
+        }
+        host = host == null ? "" : host.toLowerCase(Locale.ROOT);
+        if (LEGACY_API_HOSTS.contains(host)) {
+            throw new IllegalArgumentException(host
+                    + " is deprecated for API integrations, and Buzz refuses it for new users and domains. "
+                    + "Use the background endpoint (https://backgroundapi.agilixbuzz.com) for background processing, "
+                    + "or the interactive endpoint (https://interactiveapi.agilixbuzz.com) for requests a user is waiting on. "
+                    + "See 'API Deprecation' and 'API Time Limiting' in the Buzz API documentation.");
+        }
+        return url;
+    }
+
     /** Load an RSA private key from an unencrypted PKCS#8 PEM file. */
     public static PrivateKey loadPrivateKeyFromPem(String pemPath) {
         try {
@@ -259,6 +303,8 @@ public final class BuzzApiClient {
      *         JSON shape), or null if the body was empty/not an object.
      * @throws BuzzApiThrottledException if the request is still throttled after the
      *         retries, or the server asks for a wait longer than 10 minutes.
+     * @throws BuzzApiDeprecatedException if the OAuth token request is refused because it
+     *         used a deprecated endpoint. Never retry it.
      * @throws BuzzApiException if the request fails, or a success body cannot be
      *         parsed (such a request is not resent: the server already ran it).
      */
@@ -301,6 +347,8 @@ public final class BuzzApiClient {
      *
      * @throws BuzzApiThrottledException if the response, or any item of a batch or
      *         multi-object response, was throttled.
+     * @throws BuzzApiDeprecatedException if the response, or any item of a batch or
+     *         multi-object response, was refused as deprecated ("ApiDeprecated"). Never retry it.
      * @throws BuzzApiException if the response code is not "OK".
      */
     public JsonObject verifyResponse(JsonObject responseJson) {
@@ -325,6 +373,11 @@ public final class BuzzApiClient {
             if (isThrottleCode(code)) {
                 throw new BuzzApiThrottledException("Buzz API call was throttled (" + code + "): " + redacted,
                         code, responseJson, Collections.<Integer>emptyList(), null, throttleStatusCode(200, code));
+            }
+            if (DEPRECATED_CODE.equals(code)) {
+                String message = stringOf(toVerify.get("message"));
+                throw new BuzzApiDeprecatedException("Buzz refused a deprecated API: "
+                        + (message != null && !message.isEmpty() ? message : redacted));
             }
             throw new BuzzApiException("Buzz API call failed. Expected response.code to be OK, found: " + redacted);
         }
@@ -425,6 +478,14 @@ public final class BuzzApiClient {
                     throw new BuzzApiThrottledException("OAuth token request was throttled (HTTP " + resp.status + "): "
                             + resp.body, oauthError, null, Collections.<Integer>emptyList(),
                             toDuration(serverWait), throttleStatusCode(resp.status, null));
+                }
+                // The token endpoint reports a deprecated endpoint host name in the OAuth error format.
+                // Retrying cannot help, so this is checked before any retry.
+                if ("unauthorized_client".equals(oauthError)) {
+                    log(Level.SEVERE, "OAuth token request failed: " + resp.status + " " + resp.body);
+                    String description = stringOf(errorJson.get("error_description"));
+                    throw new BuzzApiDeprecatedException("Buzz refused the OAuth token request: "
+                            + (description != null && !description.isEmpty() ? description : resp.body), resp.status);
                 }
                 if (retriesRemaining > 0 && statusAllowsRetry(resp.status)) {
                     long wait = waitFromRetryHeader(resp.retryAfter, baseWait);
@@ -550,6 +611,13 @@ public final class BuzzApiClient {
                     ? parseEnvelope(resp.body, resp.contentType, cmd != null ? cmd : urlStr)
                     : tryParseEnvelope(resp.body, resp.contentType);
             String code = responseCode(envelope);
+
+            // A request refused as deprecated is never retried, whatever HTTP status came with it: return
+            // the envelope so the caller sees the server's message (verifyResponse throws
+            // BuzzApiDeprecatedException for it).
+            if (DEPRECATED_CODE.equals(code)) {
+                return envelope;
+            }
 
             // API time/rate limiting and backend pressure: HTTP 429/503 (REST-style), or an envelope throttle
             // code (usually with HTTP 200). Retry-After is sent either way; X-RateLimit-Reset (seconds until

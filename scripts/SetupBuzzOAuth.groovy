@@ -40,6 +40,8 @@ println '=========================================================='
 common.section('Step 1: Buzz Server URL')
 def server = (serverArg ?: common.promptRequired('Buzz API server URL (e.g. https://backgroundapi.agilixbuzz.com)', '', 'BUZZ_SERVER_URL'))
         .replaceAll('/+$', '')
+// Refuse a deprecated endpoint host name before going any further.
+server = common.checkServerUrl(server)
 println "  Server: ${server}"
 
 common.section('Step 2: Admin Login')
@@ -145,6 +147,7 @@ String getOrCreateAccount(common, String server, String adminToken) {
 
     print "\nCreating Application Identity account '${username}'..."
     def resp = common.buzzPost(server, 'createusers2', [requests: [user: [user]]], adminToken)
+    common.failIfDeprecated(resp)
     if (common.responseCode(resp) != 'OK') {
         common.fail("CreateUsers2 failed (code: ${common.responseCode(resp)}).  Response: ${resp}")
     }
@@ -172,8 +175,9 @@ List listDomains(common, String server, String token) {
     // answered "Unknown API command", so this silently returned [] on every run.
     // domainid=0 means "every domain this account has ReadDomain rights on"; limit=0
     // lifts the default 100-domain cap (capped server-side at 1000 for domainid=0).
-    //   https://api.agilixbuzz.com/docs/entry/Command/ListDomains.md
+    //   https://interactiveapi.agilixbuzz.com/docs/entry/Command/ListDomains.md
     def resp = common.buzzGet(server, 'listdomains', [domainid: '0', limit: '0'], token)
+    common.failIfDeprecated(resp)
     if (common.responseCode(resp) != 'OK') return []
     // When the account can read no domains the server answers OK with "domains":{},
     // so every level has to tolerate a missing or empty node.

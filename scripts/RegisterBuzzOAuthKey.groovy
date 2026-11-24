@@ -32,6 +32,8 @@ if (!server || !userId || !kid || !publicKeyPath) {
     System.exit(1)
 }
 server = server.replaceAll('/+$', '')
+// Refuse a deprecated endpoint host name before asking for a token.
+server = common.checkServerUrl(server)
 if (!(kid =~ /^[A-Za-z0-9._-]{1,128}$/)) {
     System.err.println 'Error: invalid kid. Allowed: ASCII letters, digits, -, _, .  Max 128 chars.'
     System.exit(1)

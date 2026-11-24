@@ -65,6 +65,7 @@ if (oauthKid) {
 
 println "\n-- Deleting Application Identity account (userid: ${oauthUserId}) --"
 def resp = common.buzzPost(server, 'deleteusers', [requests: [user: [[userid: oauthUserId]]]], adminToken)
+common.failIfDeprecated(resp)
 // The per-user outcome is authoritative.  The OUTER code is OK whenever the request
 // was merely well formed, so checking it first would report success for a delete
 // that was actually denied or whose target did not exist.
